@@ -1,0 +1,22 @@
+---
+description: Strict TDD, spec traceability, and doc-comment standards for all diffy development
+alwaysApply: true
+---
+
+# diffy engineering process (SPEC.md §14)
+
+All development in this repo is test-driven. `SPEC.md` is the source of truth.
+
+- Red-green-refactor: write a failing test encoding the spec'd behavior
+  BEFORE any implementation. If the spec is silent, amend SPEC.md first.
+- Test names cite the spec section, e.g.
+  `replay_preserves_spans_through_partial_edit_6_1`.
+- No implementation commit without its preceding failing test.
+- Every module gets `//!` docs naming its spec section; every public item
+  gets `///` docs; non-obvious logic comments explain WHY, citing SPEC.md
+  sections.
+- Invariants are commented where enforced: I1–I4 (evidence only,
+  conservation via git diffs, immutable inputs, fail-closed) in rewrite
+  code; byte-identity at the replay engine's entry point.
+- Integration tests use real git repos in tempdirs; never mock git.
+- Done = tests green + spec section marked implemented + `cargo doc` clean.

@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>diffy — code provenance report</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #1e1e2e; color: #cdd6f4; display: flex; flex-direction: column; height: 100vh; }
+
+/* Header */
+.header { padding: 12px 20px; background: #181825; border-bottom: 1px solid #313244; display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
+.header h1 { font-size: 16px; font-weight: 600; color: #cba6f7; }
+.header .comp-summary { font-size: 13px; color: #a6adc8; }
+.comp-bar { display: inline-flex; height: 14px; border-radius: 3px; overflow: hidden; min-width: 120px; vertical-align: middle; margin-left: 8px; }
+.comp-bar-seg { height: 100%; min-width: 1px; }
+
+/* Playback controls */
+.playback { padding: 8px 20px; background: #11111b; border-bottom: 1px solid #313244; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.playback button { background: #313244; border: none; color: #cdd6f4; padding: 4px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.playback button:hover { background: #45475a; }
+.playback button.active { background: #cba6f7; color: #1e1e2e; }
+.playback input[type=range] { flex: 1; max-width: 400px; accent-color: #cba6f7; }
+.playback .speed-label { font-size: 12px; color: #a6adc8; min-width: 70px; }
+.playback .event-label { font-size: 12px; color: #a6adc8; }
+
+/* Main layout */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* File explorer */
+.explorer { width: 280px; min-width: 200px; max-width: 900px; background: #181825; border-right: 1px solid #313244; overflow-y: auto; flex-shrink: 0; }
+.explorer-header { padding: 10px 14px; font-size: 12px; font-weight: 600; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #313244; }
+.file-item { padding: 6px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; border-left: 3px solid transparent; }
+.file-item:hover { background: #313244; }
+.file-item.active { background: #313244; border-left-color: #cba6f7; }
+.file-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item .mini-bar { display: flex; height: 8px; border-radius: 2px; overflow: hidden; min-width: 60px; flex-shrink: 0; }
+.file-item .mini-bar-seg { height: 100%; min-width: 1px; }
+
+/* Directory tree */
+.dir-item { padding: 4px 14px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 13px; border-left: 3px solid transparent; color: #cba6f7; font-weight: 500; }
+.dir-item:hover { background: #313244; }
+.dir-item .chevron { width: 12px; flex-shrink: 0; color: #a6adc8; font-size: 10px; text-align: center; display: inline-block; }
+.dir-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cba6f7; }
+.dir-item .mini-bar { display: flex; height: 6px; border-radius: 2px; overflow: hidden; min-width: 48px; flex-shrink: 0; }
+.dir-item .mini-bar-seg { height: 100%; min-width: 1px; }
+
+/* Explorer resize handle */
+.resize-handle { width: 5px; cursor: col-resize; background: transparent; flex-shrink: 0; position: relative; }
+.resize-handle::before { content: ''; position: absolute; left: 2px; top: 0; bottom: 0; width: 1px; background: #313244; }
+.resize-handle:hover, .resize-handle.active { background: #cba6f733; }
+.resize-handle:hover::before, .resize-handle.active::before { background: #cba6f7; }
+
+/* Grid pane */
+.grid-pane { flex: 1; overflow: auto; padding: 16px; }
+.grid-pane .file-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; color: #cba6f7; }
+.grid-pane .file-comp { font-size: 12px; color: #a6adc8; margin-bottom: 12px; }
+
+/* Character grid */
+.char-grid { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace; font-size: 13px; line-height: 1.5; }
+.grid-line { display: flex; align-items: stretch; }
+.line-num { color: #585b70; text-align: right; padding-right: 12px; min-width: 40px; user-select: none; flex-shrink: 0; font-size: 13px; line-height: 1.5; }
+.grid-chars { display: flex; flex-wrap: nowrap; }
+.grid-char { display: inline-block; min-width: 0.6em; text-align: center; border-radius: 1px; transition: background-color 0.3s; line-height: 1.5; }
+.grid-char:hover { outline: 1px solid #cba6f7; z-index: 1; }
+
+/* Tooltip */
+.tooltip { position: fixed; background: #313244; border: 1px solid #45475a; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #cdd6f4; pointer-events: none; z-index: 100; max-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.tooltip .model-name { font-weight: 600; }
+.tooltip .detail { color: #a6adc8; margin-top: 2px; }
+
+/* Legend */
+.legend { padding: 10px 14px; border-top: 1px solid #313244; background: #181825; }
+.legend-title { font-size: 11px; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.legend-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+
+/* No data state */
+.no-data { display: flex; align-items: center; justify-content: center; flex: 1; color: #585b70; font-size: 16px; }
+
+/* Tabs */
+.tabs { padding: 8px 20px; background: #11111b; border-bottom: 1px solid #313244; display: flex; gap: 4px; flex-shrink: 0; }
+.tab { background: transparent; border: 1px solid #313244; color: #a6adc8; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.tab:hover { background: #313244; }
+.tab.active { background: #cba6f7; color: #1e1e2e; border-color: #cba6f7; }
+
+/* Viz pane */
+.viz { flex: 1; overflow: auto; padding: 20px; }
+.viz-title { font-size: 14px; font-weight: 600; color: #cba6f7; margin-bottom: 14px; }
+.tm-label { font-size: 11px; color: #1e1e2e; background: rgba(255,255,255,0.75); padding: 1px 4px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* Heatmap */
+table.heatmap { border-collapse: collapse; font-size: 12px; }
+table.heatmap th, table.heatmap td { padding: 6px 10px; text-align: center; border: 1px solid #313244; min-width: 52px; }
+table.heatmap th { color: #a6adc8; font-weight: 600; }
+
+/* Legend list */
+.viz-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: 12px; }
+.viz-legend .legend-item { display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>diffy</h1>
+  <div class="comp-summary" id="comp-summary"></div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" data-view="files">Files</button>
+  <button class="tab" data-view="treemap">Treemap</button>
+  <button class="tab" data-view="stratigraphy">Stratigraphy</button>
+  <button class="tab" data-view="heatmap">Heatmap</button>
+  <button class="tab" data-view="halflife">Half-life</button>
+</div>
+
+<div class="playback">
+  <button id="btn-play" title="Play/Pause">▶ Play</button>
+  <button id="btn-step" title="Step forward one event">⏭ Step</button>
+  <input type="range" id="timeline" min="0" max="0" value="0" title="Timeline">
+  <span class="event-label" id="event-label">0 / 0</span>
+  <input type="range" id="speed" min="1" max="200" value="10" title="Speed" style="max-width:100px;">
+  <span class="speed-label" id="speed-label">1.0×</span>
+</div>
+
+<div class="main" id="main">
+  <div class="explorer">
+    <div class="explorer-header">Files</div>
+    <div id="file-list"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="resize-handle" id="resize-handle" title="Drag to resize (double-click to reset)"></div>
+  <div class="grid-pane" id="grid-pane">
+    <div class="no-data">Select a file to view its provenance grid</div>
+  </div>
+</div>
+
+<div class="viz" id="viz" style="display:none;"></div>
+
+<div class="tooltip" id="tooltip" style="display:none;"></div>
+
+<script id="diffy-data" type="application/json">__DATA__</script>
+<script>
+(function() {
+  const data = JSON.parse(document.getElementById('diffy-data').textContent);
+  const { files, events, composition, total_chars, model_colors, treemap, stratigraphy, heatmap, half_life } = data;
+
+  // State
+  let activeFile = null;
+  // Per-character session (conversation id) lookup for the currently
+  // rendered grid. null while an intermediate/playback grid is shown, so
+  // the tooltip never attributes a session to a non-final char position.
+  let activeCharSessions = null;
+  let playing = false;
+  let playTimer = null;
+  let currentEventIdx = -1; // -1 = show final state
+
+  // --- Header summary ---
+  function renderSummary() {
+    const el = document.getElementById('comp-summary');
+    let html = `${total_chars} chars, ${files.length} files `;
+    html += renderCompBar(composition, total_chars, 200);
+    const parts = Object.entries(composition).sort((a,b) => b[1]-a[1]);
+    html += ' — ' + parts.map(([m,c]) => {
+      const pct = ((c/total_chars)*100).toFixed(1);
+      return `<span style="color:${model_colors[m]||'#888'}">${m}</span> ${pct}%`;
+    }).join(', ');
+    el.innerHTML = html;
+  }
+
+  function renderCompBar(comp, total, width) {
+    const sorted = Object.entries(comp).sort((a,b) => b[1]-a[1]);
+    let html = `<span class="comp-bar" style="width:${width}px;">`;
+    for (const [m, c] of sorted) {
+      const pct = (c/total)*100;
+      html += `<span class="comp-bar-seg" style="width:${pct}%;background:${model_colors[m]||'#888'};"></span>`;
+    }
+    html += '</span>';
+    return html;
+  }
+
+  // --- File explorer ---
+  const collapsedDirs = new Set();
+
+  function miniBarHtml(comp, total) {
+    const sorted = Object.entries(comp).sort((a,b) => b[1]-a[1]);
+    let html = `<span class="mini-bar">`;
+    for (const [m, c] of sorted) {
+      const pct = total > 0 ? (c/total)*100 : 0;
+      html += `<span class="mini-bar-seg" style="width:${pct}%;background:${model_colors[m]||'#888'};"></span>`;
+    }
+    html += `</span>`;
+    return html;
+  }
+
+  // Build a directory tree from the flat file list, aggregating per-dir
+  // composition for the folder mini-bars.
+  function buildTree() {
+    const root = { name: '', path: '', dirs: new Map(), files: [], comp: {}, chars: 0 };
+    for (const f of files) {
+      const parts = f.path.split('/');
+      let node = root;
+      let acc = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        acc = acc ? acc + '/' + parts[i] : parts[i];
+        if (!node.dirs.has(parts[i])) {
+          node.dirs.set(parts[i], { name: parts[i], path: acc, dirs: new Map(), files: [], comp: {}, chars: 0 });
+        }
+        node = node.dirs.get(parts[i]);
+      }
+      node.files.push(f);
+    }
+    // Aggregate composition + chars bottom-up.
+    (function aggregate(node) {
+      for (const child of node.dirs.values()) {
+        aggregate(child);
+        for (const [m, c] of Object.entries(child.comp)) node.comp[m] = (node.comp[m] || 0) + c;
+        node.chars += child.chars;
+      }
+      for (const f of node.files) {
+        for (const [m, c] of Object.entries(f.composition)) node.comp[m] = (node.comp[m] || 0) + c;
+        node.chars += f.total_chars;
+      }
+    })(root);
+    return root;
+  }
+
+  function renderTree(node, depth) {
+    let html = '';
+    const dirs = [...node.dirs.values()].sort((a,b) => a.name.localeCompare(b.name));
+    for (const d of dirs) {
+      const isCollapsed = collapsedDirs.has(d.path);
+      const indent = 10 + depth * 14;
+      html += `<div class="dir-item" data-dir="1" data-path="${escapeHtml(d.path)}" style="padding-left:${indent}px;">`;
+      html += `<span class="chevron">${isCollapsed ? '▸' : '▾'}</span>`;
+      html += `<span class="name" title="${escapeHtml(d.path)}">${escapeHtml(d.name)}</span>`;
+      html += miniBarHtml(d.comp, d.chars);
+      html += `</div>`;
+      if (!isCollapsed) html += renderTree(d, depth + 1);
+    }
+    const fileNodes = node.files.slice().sort((a,b) => a.path.localeCompare(b.path));
+    for (const f of fileNodes) {
+      const isActive = activeFile && activeFile.path === f.path;
+      const indent = 10 + (depth + 1) * 14;
+      html += `<div class="file-item ${isActive?'active':''}" data-path="${escapeHtml(f.path)}" style="padding-left:${indent}px;">`;
+      html += `<span class="name" title="${escapeHtml(f.path)}">${escapeHtml(f.path.split('/').pop())}</span>`;
+      html += miniBarHtml(f.composition, f.total_chars);
+      html += `</div>`;
+    }
+    return html;
+  }
+
+  function renderFileList() {
+    const el = document.getElementById('file-list');
+    el.innerHTML = renderTree(buildTree(), 0);
+
+    // Directory rows toggle collapse.
+    el.querySelectorAll('.dir-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        if (collapsedDirs.has(path)) collapsedDirs.delete(path);
+        else collapsedDirs.add(path);
+        renderFileList();
+      });
+    });
+    // File rows select the file.
+    el.querySelectorAll('.file-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        activeFile = files.find(f => f.path === path);
+        renderFileList();
+        renderGrid();
+      });
+    });
+  }
+
+  // --- Legend ---
+  function renderLegend() {
+    const el = document.getElementById('legend');
+    const models = Object.entries(model_colors).sort();
+    let html = '<div class="legend-title">Models</div>';
+    for (const [m, color] of models) {
+      const chars = composition[m] || 0;
+      const pct = total_chars > 0 ? ((chars/total_chars)*100).toFixed(1) : '0.0';
+      html += `<div class="legend-item"><span class="legend-swatch" style="background:${color};"></span>${m} (${pct}%)</div>`;
+    }
+    el.innerHTML = html;
+  }
+
+  // --- Character grid ---
+  function renderGrid() {
+    const pane = document.getElementById('grid-pane');
+    if (!activeFile) {
+      pane.innerHTML = '<div class="no-data">Select a file to view its provenance grid</div>';
+      return;
+    }
+
+    const f = activeFile;
+    activeCharSessions = f.char_sessions || null;
+    const lines = f.content.split('\n');
+
+    // File header
+    let html = `<div class="file-title">${f.path}</div>`;
+    html += `<div class="file-comp">${f.total_chars} chars — `;
+    const sorted = Object.entries(f.composition).sort((a,b) => b[1]-a[1]);
+    html += sorted.map(([m,c]) => {
+      const pct = ((c/f.total_chars)*100).toFixed(1);
+      return `<span style="color:${model_colors[m]||'#888'}">${m} ${pct}%</span>`;
+    }).join(', ');
+    html += ` ${renderCompBar(f.composition, f.total_chars, 150)}</div>`;
+
+    // Grid
+    html += '<div class="char-grid">';
+    let charIdx = 0;
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+      const line = lines[lineNo];
+      html += `<div class="grid-line">`;
+      html += `<span class="line-num">${lineNo + 1}</span>`;
+      html += `<span class="grid-chars">`;
+      for (let i = 0; i < line.length; i++) {
+        const model = f.all_untracked
+          ? 'untracked'
+          : (charIdx < f.char_models.length ? f.char_models[charIdx] : 'unknown');
+        const color = model_colors[model] || '#888';
+        const ch = line[i] === ' ' ? '&nbsp;' : escapeHtml(line[i]);
+        html += `<span class="grid-char" style="background:${color}22;color:${color}" data-model="${escapeHtml(model)}" data-idx="${charIdx}">${ch}</span>`;
+        charIdx++;
+      }
+      // Account for the newline character
+      if (lineNo < lines.length - 1) charIdx++;
+      html += `</span></div>`;
+    }
+    html += '</div>';
+
+    pane.innerHTML = html;
+
+    // Tooltip handlers
+    pane.querySelectorAll('.grid-char').forEach(el => {
+      el.addEventListener('mouseenter', showTooltip);
+      el.addEventListener('mouseleave', hideTooltip);
+    });
+  }
+
+  // --- Tooltip ---
+  function showTooltip(e) {
+    const model = e.target.dataset.model;
+    const color = model_colors[model] || '#888';
+    const tooltip = document.getElementById('tooltip');
+    let html = `<div class="model-name" style="color:${color}">${escapeHtml(model)}</div>`;
+    if (activeCharSessions) {
+      const idx = parseInt(e.target.dataset.idx, 10);
+      const session = activeCharSessions[idx] || '';
+      if (session) {
+        html += `<div class="detail">session: ${escapeHtml(session)}</div>`;
+      }
+    }
+    tooltip.innerHTML = html;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY - 30) + 'px';
+  }
+
+  function hideTooltip() {
+    document.getElementById('tooltip').style.display = 'none';
+  }
+
+  // --- Playback ---
+  const timeline = document.getElementById('timeline');
+  const eventLabel = document.getElementById('event-label');
+  const speedSlider = document.getElementById('speed');
+  const speedLabel = document.getElementById('speed-label');
+  const btnPlay = document.getElementById('btn-play');
+  const btnStep = document.getElementById('btn-step');
+
+  timeline.max = events.length;
+  timeline.value = events.length; // start at final state
+  eventLabel.textContent = `${events.length} / ${events.length}`;
+
+  function getSpeedMs() {
+    // slider 1-200 maps to 5000ms - 25ms
+    const v = parseInt(speedSlider.value);
+    return Math.max(25, 5000 / v);
+  }
+
+  speedSlider.addEventListener('input', () => {
+    const v = parseInt(speedSlider.value);
+    const speed = (v / 10).toFixed(1);
+    speedLabel.textContent = `${speed}×`;
+  });
+
+  timeline.addEventListener('input', () => {
+    const idx = parseInt(timeline.value);
+    currentEventIdx = idx;
+    eventLabel.textContent = `${idx} / ${events.length}`;
+    replayToEvent(idx);
+  });
+
+  btnPlay.addEventListener('click', () => {
+    if (playing) {
+      stopPlayback();
+    } else {
+      startPlayback();
+    }
+  });
+
+  btnStep.addEventListener('click', () => {
+    stopPlayback();
+    if (currentEventIdx < events.length) {
+      currentEventIdx++;
+      timeline.value = currentEventIdx;
+      eventLabel.textContent = `${currentEventIdx} / ${events.length}`;
+      replayToEvent(currentEventIdx);
+    }
+  });
+
+  function startPlayback() {
+    playing = true;
+    btnPlay.textContent = '⏸ Pause';
+    btnPlay.classList.add('active');
+    if (currentEventIdx >= events.length) currentEventIdx = 0;
+    playNext();
+  }
+
+  function stopPlayback() {
+    playing = false;
+    btnPlay.textContent = '▶ Play';
+    btnPlay.classList.remove('active');
+    if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  }
+
+  function playNext() {
+    if (!playing || currentEventIdx >= events.length) {
+      stopPlayback();
+      return;
+    }
+    currentEventIdx++;
+    timeline.value = currentEventIdx;
+    eventLabel.textContent = `${currentEventIdx} / ${events.length}`;
+    replayToEvent(currentEventIdx);
+    playTimer = setTimeout(playNext, getSpeedMs());
+  }
+
+  // Replay: rebuild file states up to event N and re-render
+  function replayToEvent(n) {
+    // Take events[0..n] and rebuild composition
+    const subset = events.slice(0, n);
+
+    // Rebuild per-file content and char attribution
+    const fileStates = {};
+    for (const ev of subset) {
+      fileStates[ev.path] = { content: ev.after, model: ev.model };
+    }
+
+    // For the active file, rebuild the grid from replayed state
+    if (activeFile) {
+      // Find all events for this file up to n
+      const fileEvents = subset.filter(e => e.path === activeFile.path);
+      if (fileEvents.length > 0 || n === 0) {
+        // Rebuild a simple char-level attribution by replaying diffs
+        const lastEvent = fileEvents[fileEvents.length - 1];
+        const content = lastEvent ? lastEvent.after : '';
+
+        // Simple attribution: use the full file data for final state,
+        // or show empty for t=0
+        if (n >= events.length) {
+          // Final state — use the pre-computed data
+          renderGrid();
+        } else {
+          // Intermediate state — show content with last-writer attribution
+          renderIntermediateGrid(activeFile.path, content, fileEvents);
+        }
+      }
+    }
+  }
+
+  function renderIntermediateGrid(path, content, fileEvents) {
+    const pane = document.getElementById('grid-pane');
+    activeCharSessions = null; // no per-char session data for intermediate state
+    if (!content && fileEvents.length === 0) {
+      pane.innerHTML = `<div class="file-title">${path}</div><div class="no-data">File not yet created at this point in time</div>`;
+      return;
+    }
+
+    const lastModel = fileEvents.length > 0 ? fileEvents[fileEvents.length - 1].model : 'unknown';
+    const lines = content.split('\n');
+
+    let html = `<div class="file-title">${path}</div>`;
+    html += `<div class="file-comp">${content.length} chars at this point — last edit by <span style="color:${model_colors[lastModel]||'#888'}">${lastModel}</span></div>`;
+    html += '<div class="char-grid">';
+
+    let charIdx = 0;
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+      const line = lines[lineNo];
+      html += `<div class="grid-line"><span class="line-num">${lineNo+1}</span><span class="grid-chars">`;
+      for (let i = 0; i < line.length; i++) {
+        const color = model_colors[lastModel] || '#888';
+        const ch = line[i] === ' ' ? '&nbsp;' : escapeHtml(line[i]);
+        html += `<span class="grid-char" style="background:${color}22;color:${color}" data-model="${lastModel}">${ch}</span>`;
+        charIdx++;
+      }
+      if (lineNo < lines.length - 1) charIdx++;
+      html += '</span></div>';
+    }
+    html += '</div>';
+    pane.innerHTML = html;
+
+    pane.querySelectorAll('.grid-char').forEach(el => {
+      el.addEventListener('mouseenter', showTooltip);
+      el.addEventListener('mouseleave', hideTooltip);
+    });
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // --- §9.4 viz views ---
+
+  function emptyState(msg) {
+    return `<div class="no-data">${msg}</div>`;
+  }
+
+  function legendHtml(models) {
+    let html = '<div class="viz-legend">';
+    for (const m of models) {
+      html += `<div class="legend-item"><span class="legend-swatch" style="background:${model_colors[m]||'#888'}"></span>${escapeHtml(m)}</div>`;
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function hexToRgba(hex, alpha) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return hex;
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
+  }
+
+  function renderTreemap() {
+    const el = document.getElementById('viz');
+    if (!treemap || treemap.length === 0) { el.innerHTML = emptyState('No provenance data'); return; }
+    const items = treemap.slice().sort((a, b) => b.chars - a.chars);
+    const W = 1000, H = 600;
+    const rects = [];
+    layoutTreemap(items, 0, items.length, 0, 0, W, H, 0, rects);
+    let html = `<div class="viz-title">Repo treemap — area ∝ chars, color = dominant model</div>`;
+    html += `<div class="treemap" style="position:relative;width:${W}px;height:${H}px;max-width:100%;">`;
+    for (const r of rects) {
+      const color = model_colors[r.model] || '#888';
+      html += `<div style="position:absolute;left:${r.x}px;top:${r.y}px;width:${Math.max(1,r.w-1)}px;height:${Math.max(1,r.h-1)}px;background:${color};border:1px solid #1e1e2e;box-sizing:border-box;overflow:hidden;" title="${escapeHtml(r.path)} (${r.chars} chars, ${escapeHtml(r.model||'untracked')})">`;
+      if (r.w > 70 && r.h > 24) {
+        html += `<span class="tm-label">${escapeHtml(r.path)}</span>`;
+      }
+      html += `</div>`;
+    }
+    html += '</div>';
+    html += legendHtml([...new Set(items.map(i => i.model).filter(Boolean))]);
+    el.innerHTML = html;
+  }
+
+  function layoutTreemap(items, start, end, x, y, w, h, depth, out) {
+    if (start >= end) return;
+    if (end - start === 1) { out.push({ x, y, w, h, path: items[start].path, chars: items[start].chars, model: items[start].model }); return; }
+    let sliceArea = 0;
+    for (let i = start; i < end; i++) sliceArea += items[i].chars || 0;
+    if (sliceArea <= 0) { out.push({ x, y, w, h, path: items[start].path, chars: 0, model: items[start].model }); return; }
+    let cum = 0, mid = start;
+    for (let i = start; i < end; i++) { cum += items[i].chars || 0; if (cum >= sliceArea / 2) { mid = i + 1; break; } }
+    let area1 = 0; for (let i = start; i < mid; i++) area1 += items[i].chars || 0;
+    const horizontal = (depth % 2) === 0;
+    if (horizontal) {
+      const w1 = w * (area1 / sliceArea);
+      layoutTreemap(items, start, mid, x, y, w1, h, depth + 1, out);
+      layoutTreemap(items, mid, end, x + w1, y, w - w1, h, depth + 1, out);
+    } else {
+      const h1 = h * (area1 / sliceArea);
+      layoutTreemap(items, start, mid, x, y, w, h1, depth + 1, out);
+      layoutTreemap(items, mid, end, x, y + h1, w, h - h1, depth + 1, out);
+    }
+  }
+
+  function renderStratigraphy() {
+    const el = document.getElementById('viz');
+    if (!stratigraphy || stratigraphy.length === 0) { el.innerHTML = emptyState('No stratigraphy data'); return; }
+    const W = 1000, H = 500, padL = 56, padB = 36, padT = 24, padR = 16;
+    const models = [...new Set(stratigraphy.flatMap(p => Object.keys(p.layers)))].sort();
+    const totalAt = i => Object.values(stratigraphy[i].layers).reduce((s, v) => s + v, 0);
+    const maxTotal = Math.max(...stratigraphy.map((_, i) => totalAt(i))) || 1;
+    const tsMin = stratigraphy[0].ts, tsMax = stratigraphy[stratigraphy.length - 1].ts;
+    const X = t => padL + ((tsMax === tsMin) ? 0 : ((t - tsMin) / (tsMax - tsMin))) * (W - padL - padR);
+    const Y = v => padT + (1 - v / maxTotal) * (H - padT - padB);
+
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:#181825;border-radius:6px;max-width:100%;">`;
+    for (let g = 0; g <= 4; g++) {
+      const v = maxTotal * g / 4, yy = Y(v);
+      svg += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#313244" stroke-width="1"/>`;
+      svg += `<text x="${padL - 8}" y="${yy + 4}" fill="#a6adc8" font-size="11" text-anchor="end">${Math.round(v)}</text>`;
+    }
+    const layerOf = (m, i) => stratigraphy[i].layers[m] || 0;
+    models.forEach((m, j) => {
+      let d = '';
+      for (let i = 0; i < stratigraphy.length; i++) {
+        let b = 0; for (let k = 0; k < j; k++) b += layerOf(models[k], i);
+        d += `${i === 0 ? 'M' : 'L'} ${X(stratigraphy[i].ts)} ${Y(b + layerOf(m, i))} `;
+      }
+      for (let i = stratigraphy.length - 1; i >= 0; i--) {
+        let b = 0; for (let k = 0; k < j; k++) b += layerOf(models[k], i);
+        d += `L ${X(stratigraphy[i].ts)} ${Y(b)} `;
+      }
+      d += 'Z';
+      const color = model_colors[m] || '#888';
+      svg += `<path d="${d}" fill="${color}" fill-opacity="0.7" stroke="${color}" stroke-width="1"/>`;
+    });
+    svg += '</svg>';
+    el.innerHTML = `<div class="viz-title">Stratigraphy — cumulative surviving chars per model over time</div>${svg}${legendHtml(models)}`;
+  }
+
+  function renderHeatmap() {
+    const el = document.getElementById('viz');
+    if (!heatmap || heatmap.length === 0) { el.innerHTML = emptyState('No heatmap data'); return; }
+    const models = [...new Set(heatmap.map(h => h.model))].sort();
+    const dirs = [...new Set(heatmap.map(h => h.dir))].sort();
+    const max = Math.max(...heatmap.map(h => h.chars)) || 1;
+    const cell = (m, d) => heatmap.find(h => h.model === m && h.dir === d);
+    let html = `<div class="viz-title">Model × directory heatmap</div>`;
+    html += '<table class="heatmap"><tr><th></th>' + dirs.map(d => `<th>${escapeHtml(d)}</th>`).join('') + '</tr>';
+    for (const m of models) {
+      html += `<tr><th style="color:${model_colors[m] || '#888'}">${escapeHtml(m)}</th>`;
+      for (const d of dirs) {
+        const c = cell(m, d), v = c ? c.chars : 0;
+        const alpha = v === 0 ? 0 : 0.15 + 0.85 * (v / max);
+        html += `<td style="background:${hexToRgba(model_colors[m] || '#888', alpha)};" title="${escapeHtml(m)} / ${escapeHtml(d)}: ${v} chars">${v || ''}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</table>';
+    el.innerHTML = html;
+  }
+
+  function renderHalfLife() {
+    const el = document.getElementById('viz');
+    if (!half_life || half_life.length === 0) { el.innerHTML = emptyState('No half-life data'); return; }
+    const W = 1000, H = 500, padL = 56, padB = 36, padT = 24, padR = 16;
+    const maxAge = Math.max(...half_life.map(c => Math.max(...c.points.map(p => p.age_days)))) || 1;
+    const X = a => padL + (a / maxAge) * (W - padL - padR);
+    const Y = s => padT + (1 - s) * (H - padT - padB);
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:#181825;border-radius:6px;max-width:100%;">`;
+    for (let g = 0; g <= 4; g++) {
+      const s = g / 4, yy = Y(s);
+      svg += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#313244" stroke-width="1"/>`;
+      svg += `<text x="${padL - 8}" y="${yy + 4}" fill="#a6adc8" font-size="11" text-anchor="end">${Math.round(s * 100)}%</text>`;
+    }
+    svg += `<line x1="${X(0)}" y1="${Y(0.5)}" x2="${X(maxAge)}" y2="${Y(0.5)}" stroke="#585b70" stroke-width="1" stroke-dasharray="4 4"/>`;
+    svg += `<text x="${X(maxAge) + 4}" y="${Y(0.5) + 4}" fill="#585b70" font-size="11">50%</text>`;
+    for (const c of half_life) {
+      const color = model_colors[c.model] || '#888';
+      const pts = c.points.map(p => `${X(p.age_days)},${Y(p.survival)}`).join(' ');
+      svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"/>`;
+      for (const p of c.points) svg += `<circle cx="${X(p.age_days)}" cy="${Y(p.survival)}" r="3" fill="${color}"/>`;
+    }
+    svg += '</svg>';
+    el.innerHTML = `<div class="viz-title">Half-life — survival over age (days)</div>${svg}${legendHtml(half_life.map(c => c.model))}`;
+  }
+
+  function renderView(view) {
+    if (view === 'treemap') renderTreemap();
+    else if (view === 'stratigraphy') renderStratigraphy();
+    else if (view === 'heatmap') renderHeatmap();
+    else if (view === 'halflife') renderHalfLife();
+  }
+
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      const view = t.dataset.view;
+      document.getElementById('main').style.display = view === 'files' ? 'flex' : 'none';
+      document.getElementById('viz').style.display = view === 'files' ? 'none' : 'block';
+      if (view !== 'files') renderView(view);
+    });
+  });
+
+  // --- Explorer resize ---
+  const explorer = document.querySelector('.explorer');
+  const resizeHandle = document.getElementById('resize-handle');
+  let resizing = false;
+  resizeHandle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizing = true;
+    resizeHandle.classList.add('active');
+    resizeHandle.setPointerCapture(e.pointerId);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  });
+  resizeHandle.addEventListener('pointermove', (e) => {
+    if (!resizing) return;
+    // Explorer is flush-left; clientX is the desired width.
+    const width = e.clientX;
+    if (width >= 200 && width <= 900) explorer.style.width = width + 'px';
+  });
+  resizeHandle.addEventListener('pointerup', (e) => {
+    if (!resizing) return;
+    resizing = false;
+    resizeHandle.classList.remove('active');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  });
+  resizeHandle.addEventListener('dblclick', () => {
+    explorer.style.width = '280px';
+  });
+
+  // --- Init ---
+  renderSummary();
+  renderFileList();
+  renderLegend();
+  if (files.length > 0) {
+    activeFile = files[0];
+    renderFileList();
+    renderGrid();
+  }
+})();
+</script>
+</body>
+</html>
